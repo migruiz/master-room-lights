@@ -1,0 +1,12 @@
+{
+  "name": "host-control",
+  "version": "0.0.0",
+  "main": "app.js",
+  "author": {
+    "name": "piscos"
+  },
+  "dependencies": {
+    "mqtt": "^4.2.6",
+    "rxjs": "6.5.2"
+  }
+}
