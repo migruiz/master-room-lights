@@ -2,7 +2,7 @@ version: 2.1
 executors:
   docker-publisher:
     environment:
-      IMAGE_NAME: migruiz/livingroom-lights
+      IMAGE_NAME: migruiz/master-room-lights
     docker:
       - image: circleci/buildpack-deps:stretch
 jobs:
