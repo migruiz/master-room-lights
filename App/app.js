@@ -14,7 +14,7 @@ const buttonControl1 = new Observable(async subscriber => {
 });
 const buttonControl2 = new Observable(async subscriber => {
   var mqttCluster = await mqtt.getClusterAsync()
-  mqttCluster.subscribeData('zigbee2mqtt/0x187a3efffed62b0d', function (content) {
+  mqttCluster.subscribeData('zigbee2mqtt/0x90395efffe4d0098', function (content) {
     subscriber.next(content)
   });
 });
@@ -55,7 +55,7 @@ const secondfloorSensorStream = new Observable(async subscriber => {
 
 const masterRoomSensorStream = new Observable(async subscriber => {  
   var mqttCluster=await mqtt.getClusterAsync()   
-  mqttCluster.subscribeData('zigbee2mqtt/0x00158d0007c48251', function(content){        
+  mqttCluster.subscribeData('zigbee2mqtt/0x00158d0009cf6fc4', function(content){        
       if (content.occupancy){      
           subscriber.next({content})
       }
@@ -64,11 +64,11 @@ const masterRoomSensorStream = new Observable(async subscriber => {
 
 
 const shortDelaySensorStream = secondfloorSensorStream.pipe(
-  map(_ => ({ started: Date.now(), delay: 5000 })),
+  map(_ => ({ started: Date.now(), delay: 1 * 60 * 1000 })),
 )
 
 const longDelaySensorStream = merge(masterButtonSharedStream, masterRoomSensorStream).pipe(
-  map(_ => ({ started: Date.now(), delay: 20000 })),
+  map(_ => ({ started: Date.now(), delay: 15 * 60 * 1000 })),
 )
 
 
