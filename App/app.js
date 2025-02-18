@@ -27,19 +27,19 @@ const masterButtonSharedStream = buttonControl.pipe(
 
 const actionSharedStream = masterButtonSharedStream.pipe(
   scan((acc, curr) => {
-    if (curr.action === 'brightness_step_up') return { ...acc, masterState: true, brigthnessValue: acc.brigthnessValue + 30 > 254 ? 254 : acc.brigthnessValue + 30 }
-    if (curr.action === 'brightness_step_down') return { ...acc, masterState: true, brigthnessValue: acc.brigthnessValue - 30 < 2 ? 2 : acc.brigthnessValue - 30 }
+    if (curr.action === 'brightness_step_up') return { ...acc, masterState: true, brightnessValue: acc.brightnessValue + 30 > 254 ? 254 : acc.brightnessValue + 30 }
+    if (curr.action === 'brightness_step_down') return { ...acc, masterState: true, brightnessValue: acc.brightnessValue - 30 < 2 ? 2 : acc.brightnessValue - 30 }
     if (curr.action === 'color_temperature_step_up') return { ...acc, masterState: true, colorTemp: acc.colorTemp + 30 > 454 ? 454 : acc.colorTemp + 30 }
     if (curr.action === 'color_temperature_step_down') return { ...acc, masterState: true, colorTemp: acc.colorTemp - 30 < 250 ? 250 : acc.colorTemp - 30 }
     if (curr.action === 'toggle') return { ...acc, masterState: !acc.masterState }
 
-  }, { masterState: false, brigthnessValue: 30, colorTemp: 30 }),
+  }, { masterState: false, brightnessValue: 30, colorTemp: 30 }),
   share()
 )
 
 
-const longDelaySensorStream = masterButtonSharedStream.pipe(  
-  map(_=> ({ started: Date.now(), delay: 5000 })),
+const longDelaySensorStream = masterButtonSharedStream.pipe(
+  map(_ => ({ started: Date.now(), delay: 5000 })),
 )
 
 
@@ -58,26 +58,38 @@ const combinedSensorStream = sensorStream.pipe(
     if (curr.action === 'off' && acc.furthestOffEmission.started == curr.started) return { ...acc, emission: curr }
     return { ...acc, emission: null }
   }, { furthestOffEmission: null }),
-  filter(a => a.emission != null)
+  filter(a => a.emission != null),
+  map(a => a.emission),
 )
 
-combinedSensorStream.subscribe(async m => { 
-  console.log(JSON.stringify(m.emission))
-})
 
-return;
+const autoStream = combinedSensorStream.pipe(
+  withLatestFrom(actionSharedStream),
+  map(([sensor, brightness]) => ({ ...brightness, trigger: 'auto', action: sensor.action })),
+)
 
+const manualStream = actionSharedStream.pipe(map(a => ({ trigger: 'manual', ...a })))
 
-const actuatorStream = merge(manualStream)
+const actuatorStream = merge(manualStream, autoStream).pipe
+  (
+    map(a => {
+      if (!a.masterState) return { ...a, brightnessValue: 0}
+      if (a.trigger === 'auto' && a.action==='off') return { ...a, brightnessValue: 0}
+      return a
+    }),
+    distinctUntilChanged((prev, curr) => prev.brightnessValue === curr.brightnessValue && prev.colorTemp === curr.colorTemp)
+  )
 
 actuatorStream.subscribe(async m => {
+  console.log(JSON.stringify(m))
+  return;
   if (!m.masterState) {
     (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ brightness: 0 }));
     (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ brightness: 0 }));
   }
   else {
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ brightness: m.brigthnessValue }));
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ brightness: m.brigthnessValue }));
+    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ brightness: m.brightnessValue }));
+    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ brightness: m.brightnessValue }));
     (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ color_temp: m.colorTemp }));
     (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ color_temp: m.colorTemp }));
   }
