@@ -38,9 +38,16 @@ const actionSharedStream = masterButtonSharedStream.pipe(
 )
 
 
-const sensorOnSharedStream = merge(masterButtonSharedStream).pipe(
-  mapTo({ action: 'on' }),
-  share()
+const longDelaySensorStream = masterButtonSharedStream.pipe(mapTo({ delay: 5000 }))
+
+
+const sensorSharedStream = merge(longDelaySensorStream).pipe(
+  map(a => ({ ...a, id: Date.now() })),
+  flatMap(a => of(a).pipe(
+    delay(a.delay),
+    mapTo({ ...a, action: 'off' }),
+    startWith({ ...a, action: 'on' }),
+  ))
 )
 
 const offStream = sensorOnSharedStream.pipe(
