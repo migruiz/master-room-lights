@@ -1,4 +1,4 @@
-const { Observable, merge, timer, interval } = require('rxjs');
+const { Observable, merge, timer, interval, of } = require('rxjs');
 const { mergeMap, withLatestFrom, map, share, shareReplay, filter, mapTo, take, debounceTime, throttle, throttleTime, startWith, takeWhile, delay, scan, distinct, distinctUntilChanged, tap, flatMap, takeUntil, toArray, groupBy } = require('rxjs/operators');
 var mqtt = require('./mqttCluster.js');
 global.mtqqLocalPath = 'mqtt://192.168.0.11';
@@ -38,11 +38,12 @@ const actionSharedStream = masterButtonSharedStream.pipe(
 )
 
 
-const longDelaySensorStream = masterButtonSharedStream.pipe(mapTo({ delay: 5000 }))
+const longDelaySensorStream = masterButtonSharedStream.pipe(  
+  map(_=> ({ started: Date.now(), delay: 5000 })),
+)
 
 
-const sensorSharedStream = merge(longDelaySensorStream).pipe(
-  map(a => ({ ...a, id: Date.now() })),
+const sensorStream = merge(longDelaySensorStream).pipe(
   flatMap(a => of(a).pipe(
     delay(a.delay),
     mapTo({ ...a, action: 'off' }),
@@ -50,15 +51,21 @@ const sensorSharedStream = merge(longDelaySensorStream).pipe(
   ))
 )
 
-const offStream = sensorOnSharedStream.pipe(
-  debounceTime(5000),
-  mapTo({ action: 'off' }),
+const combinedSensorStream = sensorStream.pipe(
+  scan((acc, curr) => {
+    if (curr.action === 'on' && curr.furthestOffEmission == null) return { furthestOffEmission: curr, emission: curr }
+    if (curr.action === 'on' && curr.started + curr.delay > acc.furthestOffEmission.started + acc.furthestOffEmission.delay) return { furthestOffEmission: curr, emission: curr }
+    if (curr.action === 'off' && acc.furthestOffEmission.started == curr.started) return { ...acc, emission: curr }
+    return { ...acc, emission: null }
+  }, { furthestOffEmission: null }),
+  filter(a => a.emission != null)
 )
 
-const autoSensorStream = merge(sensorOnSharedStream, offStream)
+combinedSensorStream.subscribe(async m => { 
+  console.log(JSON.stringify(m.emission))
+})
 
-
-const manualStream = actionSharedStream.pipe(map(a => ({ ...a, trigger: 'manual' })))
+return;
 
 
 const actuatorStream = merge(manualStream)
