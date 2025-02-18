@@ -6,7 +6,13 @@ global.mtqqLocalPath = 'mqtt://192.168.0.11';
 
 
 
-const buttonControl = new Observable(async subscriber => {
+const buttonControl1 = new Observable(async subscriber => {
+  var mqttCluster = await mqtt.getClusterAsync()
+  mqttCluster.subscribeData('zigbee2mqtt/0x187a3efffed62b0d', function (content) {
+    subscriber.next(content)
+  });
+});
+const buttonControl2 = new Observable(async subscriber => {
   var mqttCluster = await mqtt.getClusterAsync()
   mqttCluster.subscribeData('zigbee2mqtt/0x187a3efffed62b0d', function (content) {
     subscriber.next(content)
@@ -14,7 +20,7 @@ const buttonControl = new Observable(async subscriber => {
 });
 
 
-const masterButtonSharedStream = buttonControl.pipe(
+const masterButtonSharedStream = merge(buttonControl1,buttonControl2).pipe(
   filter(c =>
     c.action === 'brightness_step_up' ||
     c.action === 'brightness_step_down' ||
@@ -38,12 +44,35 @@ const actionSharedStream = masterButtonSharedStream.pipe(
 )
 
 
-const longDelaySensorStream = masterButtonSharedStream.pipe(
+const secondfloorSensorStream = new Observable(async subscriber => {  
+  var mqttCluster=await mqtt.getClusterAsync()   
+  mqttCluster.subscribeData('zigbee2mqtt/0x00158d0007c48250', function(content){        
+      if (content.occupancy){      
+          subscriber.next({content})
+      }
+  });
+});
+
+const masterRoomSensorStream = new Observable(async subscriber => {  
+  var mqttCluster=await mqtt.getClusterAsync()   
+  mqttCluster.subscribeData('zigbee2mqtt/0x00158d0007c48251', function(content){        
+      if (content.occupancy){      
+          subscriber.next({content})
+      }
+  });
+});
+
+
+const shortDelaySensorStream = secondfloorSensorStream.pipe(
   map(_ => ({ started: Date.now(), delay: 5000 })),
 )
 
+const longDelaySensorStream = merge(masterButtonSharedStream, masterRoomSensorStream).pipe(
+  map(_ => ({ started: Date.now(), delay: 20000 })),
+)
 
-const sensorStream = merge(longDelaySensorStream).pipe(
+
+const sensorStream = merge(shortDelaySensorStream, longDelaySensorStream).pipe(
   flatMap(a => of(a).pipe(
     delay(a.delay),
     mapTo({ ...a, action: 'off' }),
@@ -73,26 +102,19 @@ const manualStream = actionSharedStream.pipe(map(a => ({ trigger: 'manual', ...a
 const actuatorStream = merge(manualStream, autoStream).pipe
   (
     map(a => {
-      if (!a.masterState) return { ...a, brightnessValue: 0}
-      if (a.trigger === 'auto' && a.action==='off') return { ...a, brightnessValue: 0}
+      if (!a.masterState) return { ...a, brightnessValue: 0 }
+      if (a.trigger === 'auto' && a.action === 'off') return { ...a, brightnessValue: 0 }
       return a
     }),
     distinctUntilChanged((prev, curr) => prev.brightnessValue === curr.brightnessValue && prev.colorTemp === curr.colorTemp)
   )
 
 actuatorStream.subscribe(async m => {
-  console.log(JSON.stringify(m))
-  return;
-  if (!m.masterState) {
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ brightness: 0 }));
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ brightness: 0 }));
-  }
-  else {
+  console.log(JSON.stringify(m));
     (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ brightness: m.brightnessValue }));
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ brightness: m.brightnessValue }));
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ color_temp: m.colorTemp }));
-    (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ color_temp: m.colorTemp }));
-  }
+  (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ brightness: m.brightnessValue }));
+  (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe9d3c8a/set', JSON.stringify({ color_temp: m.colorTemp }));
+  (await mqtt.getClusterAsync()).publishMessage('zigbee2mqtt/0x04cd15fffe8a196d/set', JSON.stringify({ color_temp: m.colorTemp }));
 
 })
 
