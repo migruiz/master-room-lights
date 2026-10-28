@@ -20,7 +20,44 @@ const buttonControl2 = new Observable(async subscriber => {
 });
 
 
-const masterButtonSharedStream = merge(buttonControl1,buttonControl2).pipe(
+// IKEA BILRESA scroll wheel (E2490), since 28/10/2026. Turning it sends
+// brightness_move_to_level with action_level: the wheel's own position, 1 to 255, which knows
+// nothing of the lights. So only which way it moved counts, and by how many clicks: a click is
+// 14, a fast turn sends a few at once, and at either end it keeps sending 255 (or 1) while you
+// carry on turning. Each click does what one click of the knobs above does. A press sends on
+// and off in turn, whatever the lights are doing, so either one is a toggle.
+const wheelControl = new Observable(async subscriber => {
+  var mqttCluster = await mqtt.getClusterAsync()
+  mqttCluster.subscribeData('zigbee2mqtt/0x1035970000a7952a', function (content) {
+    subscriber.next(content)
+  });
+}).pipe(share())
+
+const WHEEL_CLICK = 14
+const wheelTurnStream = wheelControl.pipe(
+  filter(c => c.action === 'brightness_move_to_level' && Number.isInteger(c.action_level)),
+  scan((acc, c) => {
+    const position = c.action_level
+    const was = acc.position
+    let action = null
+    if (was !== null && position > was) action = 'brightness_step_up'
+    else if (was !== null && position < was) action = 'brightness_step_down'
+    else if (position >= 254) action = 'brightness_step_up'    // still turning past the top end
+    else if (position <= 1) action = 'brightness_step_down'    // still turning past the bottom end
+    // (After a restart the first turn in the middle only tells where the wheel is.)
+    const clicks = (was === null || position === was) ? 1 : Math.min(4, Math.max(1, Math.round(Math.abs(position - was) / WHEEL_CLICK)))
+    return { position, action, clicks }
+  }, { position: null }),
+  filter(w => w.action !== null),
+  map(w => ({ action: w.action, clicks: w.clicks }))
+)
+const wheelPressStream = wheelControl.pipe(
+  filter(c => c.action === 'on' || c.action === 'off'),
+  mapTo({ action: 'toggle' })
+)
+
+
+const masterButtonSharedStream = merge(buttonControl1,buttonControl2,wheelTurnStream,wheelPressStream).pipe(
   filter(c =>
     c.action === 'brightness_step_up' ||
     c.action === 'brightness_step_down' ||
@@ -33,8 +70,10 @@ const masterButtonSharedStream = merge(buttonControl1,buttonControl2).pipe(
 
 const actionSharedStream = masterButtonSharedStream.pipe(
   scan((acc, curr) => {
-    if (curr.action === 'brightness_step_up') return { ...acc, masterState: true, brightnessValue: acc.brightnessValue + 30 > 254 ? 254 : acc.brightnessValue + 30 }
-    if (curr.action === 'brightness_step_down') return { ...acc, masterState: true, brightnessValue: acc.brightnessValue - 30 < 2 ? 2 : acc.brightnessValue - 30 }
+    // A knob click is one step of 30; the wheel can send a few clicks at once.
+    const steps = curr.clicks || 1
+    if (curr.action === 'brightness_step_up') return { ...acc, masterState: true, brightnessValue: Math.min(254, acc.brightnessValue + 30 * steps) }
+    if (curr.action === 'brightness_step_down') return { ...acc, masterState: true, brightnessValue: Math.max(2, acc.brightnessValue - 30 * steps) }
     if (curr.action === 'color_temperature_step_up') return { ...acc, masterState: true, colorTemp: acc.colorTemp + 30 > 454 ? 454 : acc.colorTemp + 30 }
     if (curr.action === 'color_temperature_step_down') return { ...acc, masterState: true, colorTemp: acc.colorTemp - 30 < 250 ? 250 : acc.colorTemp - 30 }
     if (curr.action === 'toggle') return { ...acc, masterState: !acc.masterState }
